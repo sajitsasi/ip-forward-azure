@@ -211,4 +211,4 @@ for i in `seq 1 2`; do
 
 done
 
-# 10. Create forwarding rules in the VMs
+# 11. Create forwarding rules in the VMs
