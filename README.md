@@ -6,10 +6,12 @@ This is a simple solution that uses an Azure Standard Load Balancer and 2 VMs to
 
 ## Installation
 1. Run ```./create_infra.sh``` which will create all the necessary infrastructure
-2. Login to each of the forwarding VMs (this assumes you're connecting via Bastion VM):
+2. Run the following commands in each of the forwarding VMs (this assumes you're connecting via Bastion VM):
+   Note: fwdvmX = fwdvm1 or fwdvm2
+          <dest_hostname> = Destination hostname like www.bing.com or similar
    ```
    ssh bastionvm
-   ssh fwdvm1
+   ssh fwdvmX
    sudo apt-get update && sudo apt install iptables-persistent netfilter-persistent -y
    sudo curl -o /usr/local/bin/ip_fwd.sh https://raw.githubusercontent.com/sajitsasi/ip-forward-azure/main/ip_fwd.sh
    sudo chmod +x /usr/local/bin/ip_fwd.sh
