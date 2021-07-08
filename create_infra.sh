@@ -20,52 +20,88 @@ AZ_LB_HEALTH_PROBE="SSHHealthProbe"
 AZ_LB_HTTP_RULE="HTTPRule"
 AZ_LB_HTTPS_RULE="HTTPSRule"
 AZ_LB_BEPOOL="bepool"
+AZ_NAT_GW="FWDNATGateway"
+AZ_NAT_PUBLIC_IP="NATPublicIP"
 
+GREEN="\e[01;32m"
+BLUE="\e[01;36m"
+RED="\e[01;31m"
+NOCOL="\e[0m"
+function runcmd() {
+  echo -en "${BLUE}+ $@${NOCOL}">&2
+  out=$($@ 2>&1)
+  if [ $? -eq 0 ]; then
+    echo -e "${GREEN} -- success! ${NOCOL}"
+  else
+    echo -e "\n${RED}${out}${NOCOL}"
+    echo "exiting"
+    exit -1
+  fi
+}
 
 # 1. Create Azure Resource Group
-az group create --name ${AZ_RG} --location ${AZ_LOCATION}
+runcmd "az group create --name ${AZ_RG} --location ${AZ_LOCATION}"
 
-# 2. Create VNET
-az network vnet create \
+# 2. Create Public IP and NAT Gateway for outbound VM connectivity 
+runcmd "az network public-ip create \
+-g ${AZ_RG} \
+--name ${AZ_NAT_PUBLIC_IP} \
+--sku standard \
+--allocation static"
+
+runcmd "az network nat gateway create \
+-g ${AZ_RG} \
+--name ${AZ_NAT_GW} \
+--public-ip-addresses ${AZ_NAT_PUBLIC_IP} \
+--idle-timeout 10"
+
+# 3. Create VNET
+runcmd "az network vnet create \
   -g ${AZ_RG} \
   -n ${AZ_VNET} \
   --address-prefixes ${AZ_VNET_CIDR} \
   --subnet-name ${AZ_VNET_VM_SUBNET} \
   --subnet-prefixes ${AZ_VNET_VM_SUBNET_CIDR} \
-  --location ${AZ_LOCATION}
+  --location ${AZ_LOCATION}"
 
-# 3. Create frontend subnet
-az network vnet subnet create \
+runcmd "az network vnet subnet update \
+-g ${AZ_RG} \
+--vnet-name ${AZ_VNET} \
+--name ${AZ_VNET_VM_SUBNET} \
+--nat-gateway ${AZ_NAT_GW}"
+
+# 4. Create frontend subnet
+runcmd "az network vnet subnet create \
   -g ${AZ_RG} \
   --vnet-name ${AZ_VNET} \
   -n ${AZ_VNET_FE_SUBNET} \
-  --address-prefix ${AZ_VNET_FE_SUBNET_CIDR}
+  --address-prefix ${AZ_VNET_FE_SUBNET_CIDR}"
 
-# 4. Create PLS subnet and update PLS policies
-az network vnet subnet create \
+# 5. Create PLS subnet and update PLS policies
+runcmd "az network vnet subnet create \
   -g ${AZ_RG} \
   --vnet-name ${AZ_VNET} \
   -n ${AZ_VNET_PLS_SUBNET} \
-  --address-prefix ${AZ_VNET_PLS_SUBNET_CIDR}
+  --address-prefix ${AZ_VNET_PLS_SUBNET_CIDR}"
 
-az network vnet subnet update \
+runcmd "az network vnet subnet update \
   -g ${AZ_RG} \
   --vnet-name ${AZ_VNET} \
   -n ${AZ_VNET_PLS_SUBNET} \
-  --disable-private-link-service-network-policies true
+  --disable-private-link-service-network-policies true"
 
-# 5. Create Bastion subnet (Optional only if you need external connectivity)
-az network vnet subnet create \
+# 6. Create Bastion subnet (Optional only if you need external connectivity)
+runcmd "az network vnet subnet create \
   -g ${AZ_RG} \
   --vnet-name ${AZ_VNET} \
   -n ${AZ_VNET_BASTION_SUBNET} \
-  --address-prefix ${AZ_VNET_BASTION_SUBNET_CIDR}
+  --address-prefix ${AZ_VNET_BASTION_SUBNET_CIDR}"
 
-# 6. Create NSG and allow SSH access from HOME_IP (Optional only if you need external connectivity)
-az network nsg create -g ${AZ_RG} --name ${AZ_NSG}
+# 7. Create NSG and allow SSH access from HOME_IP (Optional only if you need external connectivity)
+runcmd "az network nsg create -g ${AZ_RG} --name ${AZ_NSG}"
 
 HOME_IP="$(curl ifconfig.me)/32"
-az network nsg rule create \
+runcmd "az network nsg rule create \
   -g ${AZ_RG} \
   --nsg-name ${AZ_NSG} \
   --name "AllowSSH" \
@@ -74,42 +110,43 @@ az network nsg rule create \
   --destination-port-range 22 \
   --access allow \
   --priority 500 \
-  --protocol Tcp
+  --protocol Tcp"
 
-az network vnet subnet update \
+runcmd "az network vnet subnet update \
   -g ${AZ_RG} \
   -n ${AZ_VNET_BASTION_SUBNET} \
   --vnet-name ${AZ_VNET} \
-  --network-security-group ${AZ_NSG}
+  --network-security-group ${AZ_NSG}"
 
-# 7. Create Bastion VM (Optional VM only needed if you need external connectivity)
-az vm create \
+# 8. Create Bastion VM (Optional VM only needed if you need external connectivity)
+runcmd "az vm create \
   -g ${AZ_RG} \
+  --name bastionvm \
   --image UbuntuLTS \
   --admin-user azureuser \
   --generate-ssh-keys \
   --vnet-name ${AZ_VNET} \
-  --subnet ${AZ_BASTION_SUBNET} \
-  --no-wait
+  --subnet ${AZ_VNET_BASTION_SUBNET} \
+  --no-wait"
 
-# 8. Create Standard Internal Load Balancer, probe, and rules
-az network lb create \
+# 9. Create Standard Internal Load Balancer, probe, and rules
+runcmd "az network lb create \
   -g ${AZ_RG} \
   --name ${AZ_LB} \
   --sku standard \
   --vnet-name ${AZ_VNET} \
   --subnet ${AZ_VNET_FE_SUBNET} \
   --frontend-ip-name ${AZ_LB_FE_NAME} \
-  --backend-pool-name ${AZ_LB_BEPOOL}
+  --backend-pool-name ${AZ_LB_BEPOOL}"
 
-az network lb probe create \
+runcmd "az network lb probe create \
   -g ${AZ_RG} \
   --lb-name ${AZ_LB} \
   --name ${AZ_LB_HEALTH_PROBE} \
   --protocol Tcp \
-  --port 80
+  --port 22"
 
-az network lb rule create \
+runcmd "az network lb rule create \
   -g ${AZ_RG} \
   --lb-name ${AZ_LB} \
   --name ${AZ_LB_HTTP_RULE} \
@@ -118,9 +155,9 @@ az network lb rule create \
   --backend-port 80 \
   --frontend-ip-name ${AZ_LB_FE_NAME} \
   --backend-pool-name ${AZ_LB_BEPOOL} \
-  --probe-name ${AZ_LB_HEALTH_PROBE}
+  --probe-name ${AZ_LB_HEALTH_PROBE}"
 
-az network lb rule create \
+runcmd "az network lb rule create \
   -g ${AZ_RG} \
   --lb-name ${AZ_LB} \
   --name ${AZ_LB_HTTPS_RULE} \
@@ -129,49 +166,48 @@ az network lb rule create \
   --backend-port 443 \
   --frontend-ip-name ${AZ_LB_FE_NAME} \
   --backend-pool-name ${AZ_LB_BEPOOL} \
-  --probe-name ${AZ_LB_HEALTH_PROBE}
+  --probe-name ${AZ_LB_HEALTH_PROBE}"
 
-# 9. Create NICs and VMs
+# 10. Create NICs and VMs
 AZ_VM_NIC="FwdVMNIC${RANDOM}"
 AZ_VM_NAME="fwdvm"
 AZ_LB_PRIVATE_IP=$(az network lb frontend-ip show -g ${AZ_RG} --lb-name ${AZ_LB} -n ${AZ_LB_FE_NAME} --query privateIpAddress -o tsv)
 for i in `seq 1 2`; do
   NIC="${AZ_VM_NIC}${i}"
   VM="${AZ_VM_NAME}${i}"
-  az network nic create \
+  runcmd "az network nic create \
     -g ${AZ_RG} \
     -n ${NIC} \
     --vnet-name ${AZ_VNET} \
-    --subnet ${AZ_VNET_VM_SUBNET}
+    --subnet ${AZ_VNET_VM_SUBNET}"
 
-  az vm create \
+  runcmd "az vm create \
     -g ${AZ_RG} \
     -n ${VM} \
     --image UbuntuLTS \
     --admin-user azureuser \
     --generate-ssh-keys \
     --nics ${NIC} \
-    --public-ip-address "" \
-    --custom-data ./cloud_init.yaml 
+    --custom-data ./cloud_init.yaml"
 
-  az network nic ip-config address-pool add \
+  runcmd "az network nic ip-config address-pool add \
     -g ${AZ_RG} \
     --lb-name ${AZ_LB} \
     --address-pool ${AZ_LB_BEPOOL} \
     --ip-config-name ipconfig1 \
-    --nic-name ${NIC} 
+    --nic-name ${NIC}"
 
-  az vm run-command invoke \
-    -g ${AZ_RG} \
-    --command-id RunShellScript \
-    -n ${VM} \
-    --scripts "/usr/local/bin/ip_fwd.sh -i eth0 -f 80 -a ${AZ_LB_PRIVATE_IP} -b 80"
+#  runcmd "az vm run-command invoke \
+#    -g ${AZ_RG} \
+#    --command-id RunShellScript \
+#    -n ${VM} \
+#    --scripts \"/usr/local/bin/ip_fwd.sh -i eth0 -f 80 -a ${AZ_LB_PRIVATE_IP} -b 80\""
 
-  az vm run-command invoke \
-    -g ${AZ_RG} \
-    --command-id RunShellScript \
-    -n ${VM} \
-    --scripts "/usr/local/bin/ip_fwd.sh -i eth0 -f 443 -a ${AZ_LB_PRIVATE_IP} -b 443"
+#  runcmd "az vm run-command invoke \
+#    -g ${AZ_RG} \
+#    --command-id RunShellScript \
+#    -n ${VM} \
+#    --scripts \"/usr/local/bin/ip_fwd.sh -i eth0 -f 443 -a ${AZ_LB_PRIVATE_IP} -b 443\""
 
 done
 

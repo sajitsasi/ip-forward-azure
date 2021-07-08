@@ -1,9 +1,20 @@
 #!/bin/bash
-
 #-------------------------------------------------------------------------
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License. 
 #--------------------------------------------------------------------------
+
+############################################################################
+# This is demo code and has not been tested for use in production.  As such 
+# this code demonstrates how to do port forwarding using a Linux machine 
+# in Azure
+#
+# YOU ARE USING THIS AT YOUR OWN RISK!!!
+#
+# Author: Sajit Sasi
+# Author Email: sajit.sasi@microsoft.com
+############################################################################
+
 
 usage() {
 	echo -e "\e[33m"
